@@ -4,7 +4,8 @@
   "description": "Minipub é um servidor WebSocket com um protocolo publish/subscribe (pub/sub) binário minimalista.",
   "main": "minipub.js",
   "scripts": {
-    "test": "jest"
+    "test": "jest",
+    "start": "node server.js"
   },
   "repository": {
     "type": "git",
@@ -19,5 +20,9 @@
   "homepage": "https://github.com/angelonuffer/minipub#readme",
   "devDependencies": {
     "jest": "^29.7.0"
+  },
+  "dependencies": {
+    "uuid": "^11.1.0",
+    "ws": "^8.18.2"
   }
 }

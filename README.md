@@ -37,100 +37,182 @@ Existem três tipos de mensagem:
     * Mensagem de Despedida (restante da mensagem) - Uma mensagem a ser enviada para os clientes restantes inscritos no tópico.
 * **Ação:** O cliente é desinscrito do tópico especificado. A mensagem de despedida é enviada para todos os clientes que permanecem inscritos nesse tópico.
 
-## Gerenciamento de Estado com `handleMessage`
+## Como Rodar o Servidor
 
-O núcleo da lógica de pub/sub é gerenciado por uma função pura chamada `handleMessage`. Essa função é responsável por atualizar o estado da aplicação com base nas mensagens recebidas dos clientes.
+Para rodar o servidor Minipub, você precisará ter o [Node.js](https://nodejs.org/) instalado em sua máquina.
 
-### Definição da Função
+1.  **Instale as dependências:**
+    Navegue até o diretório raiz do projeto e execute o comando abaixo para instalar as bibliotecas necessárias (como `ws` e `uuid`):
+    ```bash
+    npm install
+    ```
+
+2.  **Inicie o servidor:**
+    Após a instalação das dependências, inicie o servidor com o seguinte comando:
+    ```bash
+    node server.js
+    ```
+
+O servidor WebSocket estará em execução e escutando em `ws://localhost:8080`.
+
+## Conectando ao Servidor e Utilizando as Funcionalidades
+
+Para interagir com o servidor Minipub, seu cliente WebSocket deve se conectar ao endereço `ws://localhost:8080`.
+
+A comunicação é feita através de mensagens binárias, conforme detalhado na seção "Protocolo de Comunicação". Seu cliente precisará construir e enviar essas mensagens como `Buffer` ou `Uint8Array`.
+
+Aqui está um exemplo conceitual de como um cliente poderia interagir com o servidor:
+
+1.  **Inscrever-se em um Tópico:**
+    *   Para se inscrever no tópico "noticias", o cliente enviaria uma mensagem binária composta por:
+        *   Byte de Tipo: `0` (Subscribe)
+        *   Tópico: "noticias" (UTF-8, preenchido com nulos até 128 bytes)
+        *   Mensagem de Saudação: "Olá, sou um novo inscrito!" (UTF-8)
+
+2.  **Publicar uma Mensagem:**
+    *   Para publicar "Nova atualização importante!" no tópico "noticias", o cliente enviaria:
+        *   Byte de Tipo: `1` (Publish)
+        *   Tópico: "noticias" (UTF-8, preenchido com nulos até 128 bytes)
+        *   Mensagem: "Nova atualização importante!" (UTF-8)
+
+3.  **Receber Mensagens:**
+    *   O cliente deve estar preparado para receber mensagens binárias do servidor. Estas podem ser saudações de outros clientes, mensagens publicadas nos tópicos inscritos ou mensagens de despedida. O conteúdo da mensagem recebida será o payload original enviado por outro cliente.
+
+### Exemplo de Cliente JavaScript (Navegador)
+
+Abaixo está um exemplo de como um cliente JavaScript, rodando em um navegador, poderia se conectar e interagir com o servidor Minipub. Você pode salvar este código como um arquivo `.js` e incluí-lo em uma página HTML.
 
 ```javascript
+// Minipub WebSocket Client Example for Browsers
+
+// Configuration
+const SERVER_URL = 'ws://localhost:8080';
+const TOPIC_GENERAL = 'general';
+
+// --- WebSocket Connection ---
+const socket = new WebSocket(SERVER_URL);
+socket.binaryType = 'arraybuffer'; // Important for receiving binary data
+
+socket.onopen = () => {
+    console.log('WebSocket connection established.');
+
+    // 3. Subscribe to a topic upon connection
+    const greetingMessage = 'Hello from browser client!';
+    const subscribeMsg = encodeMessage(0, TOPIC_GENERAL, greetingMessage);
+    if (subscribeMsg) {
+        socket.send(subscribeMsg);
+        console.log(`Sent SUBSCRIBE to topic "${TOPIC_GENERAL}" with greeting: "${greetingMessage}"`);
+    }
+
+    // 4. Publish a message after a delay
+    setTimeout(() => {
+        const publishPayload = 'This is a test message to the general topic!';
+        const publishMsg = encodeMessage(1, TOPIC_GENERAL, publishPayload);
+        if (publishMsg) {
+            socket.send(publishMsg);
+            console.log(`Sent PUBLISH to topic "${TOPIC_GENERAL}" with message: "${publishPayload}"`);
+        }
+    }, 2000); // 2-second delay
+};
+
+socket.onerror = (error) => {
+    console.error('WebSocket Error:', error);
+};
+
+socket.onclose = (event) => {
+    console.log('WebSocket connection closed:', event.code, event.reason);
+};
+
+// --- Message Encoding Function ---
 /**
- * Processa uma mensagem recebida e retorna o novo estado da aplicação.
- * Esta é uma função pura, o que significa que não modifica o estado original.
- *
- * @param {object} state - O estado atual da aplicação.
- * @param {string|number} client - Um identificador único para o cliente que enviou a mensagem.
- * @param {Buffer|Uint8Array} message - A mensagem binária recebida do cliente.
- * @returns {object} - O novo estado da aplicação após processar a mensagem.
+ * Encodes a message for the Minipub server.
+ * @param {number} type - Message type (0: Subscribe, 1: Publish, 2: Unsubscribe).
+ * @param {string} topic - The topic string (max 128 bytes UTF-8).
+ * @param {string} payloadString - The payload string.
+ * @returns {ArrayBuffer | null} - The encoded message as an ArrayBuffer, or null on error.
  */
-function handleMessage(state, client, message) {
-  // ... lógica de processamento ...
+function encodeMessage(type, topic, payloadString) {
+    try {
+        // 1-byte buffer for type
+        const typeBuffer = new Uint8Array([type]).buffer;
+
+        // 128-byte buffer for topic
+        const topicBuffer = new ArrayBuffer(128);
+        const topicView = new Uint8Array(topicBuffer);
+        const encodedTopic = new TextEncoder().encode(topic);
+        if (encodedTopic.length > 128) {
+            console.error('Topic string is too long (max 128 bytes UTF-8).');
+            return null;
+        }
+        topicView.set(encodedTopic); // Copies encodedTopic into topicBuffer, padding with 0s
+
+        // Buffer for payload
+        const payloadBuffer = new TextEncoder().encode(payloadString).buffer;
+
+        // Concatenate buffers
+        const totalLength = typeBuffer.byteLength + topicBuffer.byteLength + payloadBuffer.byteLength;
+        const messageArrayBuffer = new ArrayBuffer(totalLength);
+        const messageView = new Uint8Array(messageArrayBuffer);
+
+        let offset = 0;
+        messageView.set(new Uint8Array(typeBuffer), offset);
+        offset += typeBuffer.byteLength;
+        messageView.set(new Uint8Array(topicBuffer), offset);
+        offset += topicBuffer.byteLength;
+        messageView.set(new Uint8Array(payloadBuffer), offset);
+
+        return messageArrayBuffer;
+    } catch (e) {
+        console.error("Error encoding message:", e);
+        return null;
+    }
 }
+
+// --- Receiving Messages ---
+socket.onmessage = (event) => {
+    if (event.data instanceof ArrayBuffer) {
+        console.log('Received binary message from server.');
+        // For simplicity, this example assumes the *entire* received message is the payload.
+        // A real client would parse the type and topic from the incoming message if needed.
+        // We also skip the first 129 bytes (type + topic) to get to the payload.
+
+        const receivedBuffer = event.data;
+        if (receivedBuffer.byteLength > 129) {
+            const payloadArrayBuffer = receivedBuffer.slice(129); // Skip type (1 byte) and topic (128 bytes)
+            try {
+                const payloadString = new TextDecoder('utf-8').decode(payloadArrayBuffer);
+                console.log('Received Payload:', payloadString);
+            } catch (e) {
+                console.error('Error decoding received message payload:', e);
+                // Fallback: log as hex if decoding fails
+                const hexPayload = Array.from(new Uint8Array(payloadArrayBuffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                console.log('Received Payload (hex):', hexPayload);
+            }
+        } else if (receivedBuffer.byteLength > 0) {
+            // If message is too short to contain our expected type+topic+payload structure,
+            // it might be a different kind of message or an error.
+            // For now, just try to decode the whole thing if it's not empty.
+             try {
+                const payloadString = new TextDecoder('utf-8').decode(receivedBuffer);
+                console.log('Received (short) Message / Payload:', payloadString);
+            } catch (e) {
+                console.error('Error decoding short received message:', e);
+            }
+        } else {
+            console.log('Received an empty message.');
+        }
+    } else {
+        // This case should ideally not happen if server sends binary as configured
+        console.log('Received non-binary message:', event.data);
+    }
+};
+
+console.log('Minipub client script loaded. Attempting to connect...');
+// To use this script:
+// 1. Save it as a .js file (e.g., minipub_client.js).
+// 2. Include it in an HTML file: <script src="minipub_client.js"></script>
+// 3. Open the HTML file in a browser with the developer console open.
+// 4. Ensure your Minipub server is running on ws://localhost:8080.
 ```
 
-### Estrutura do Estado (`state`)
-
-O objeto de estado (`state`) possui a seguinte estrutura:
-
-```javascript
-{
-  clients: [], // Array de IDs de todos os clientes únicos que interagiram com o servidor.
-  topics: {},    // Objeto onde as chaves são nomes de tópicos (strings) e os
-                 // valores são arrays de IDs de clientes inscritos naquele tópico.
-  messagesToSend: [] // Array de objetos, cada um representando uma mensagem que precisa ser
-                     // enviada a um cliente. Cada objeto tem a forma:
-                     // { destination: clientID, message: Buffer }
-}
-```
-
-*   **`clients`**: Uma lista de todos os identificadores de clientes únicos (ex: `['client1', 'client2']`). Um cliente é adicionado a esta lista na sua primeira operação de subscribe ou publish bem-sucedida.
-*   **`topics`**: Um dicionário onde cada chave é o nome de um tópico (ex: `"news"`, `"sports"`) e o valor é uma lista dos IDs dos clientes inscritos nesse tópico (ex: `{"news": ["client1", "client3"]}`).
-*   **`messagesToSend`**: Uma lista de mensagens que o servidor deve enviar aos clientes. Cada item na lista é um objeto com:
-    *   `destination`: O ID do cliente que deve receber a mensagem.
-    *   `message`: O conteúdo da mensagem (um `Buffer`) a ser enviado.
-
-### Mensagem de Entrada (`message`)
-
-A `message` é um `Buffer` (ou `Uint8Array`) que segue o protocolo binário definido anteriormente:
-
-*   **Byte 0**: Tipo da mensagem (`0` para Subscribe, `1` para Publish, `2` para Unsubscribe).
-*   **Bytes 1-128**: Nome do tópico (UTF-8, 128 bytes, preenchido com nulos se menor).
-*   **Bytes 129 em diante**: Payload da mensagem (saudação, mensagem a ser publicada, ou despedida).
-
-### Exemplo de Uso (Conceitual)
-
-```javascript
-const { getInitialState, handleMessage } = require('./minipub');
-
-let currentState = getInitialState();
-const clientA = 'client-a';
-const clientB = 'client-b';
-
-// Client A se inscreve no tópico 'updates'
-// Mensagem de Subscribe: Tipo 0, Tópico 'updates', Saudação 'Client A joining!'
-const topicA = 'updates';
-const greetingA = 'Client A joining!';
-const topicABuffer = Buffer.alloc(128);
-topicABuffer.write(topicA, 'utf-8');
-const greetingABuffer = Buffer.from(greetingA, 'utf-8');
-const subscribeMessageA = Buffer.concat([Buffer.from([0]), topicABuffer, greetingABuffer]);
-
-currentState = handleMessage(currentState, clientA, subscribeMessageA);
-// currentState agora reflete clientA inscrito em 'updates'.
-// currentState.messagesToSend estará vazio, pois não havia outros inscritos.
-
-// Client B se inscreve no tópico 'updates'
-const greetingB = 'Client B says hello!';
-const topicBBuffer = Buffer.alloc(128);
-topicBBuffer.write(topicA, 'utf-8'); // Mesmo tópico 'updates'
-const greetingBBuffer = Buffer.from(greetingB, 'utf-8');
-const subscribeMessageB = Buffer.concat([Buffer.from([0]), topicBBuffer, greetingBBuffer]);
-
-currentState = handleMessage(currentState, clientB, subscribeMessageB);
-// currentState.topics['updates'] agora inclui clientA e clientB.
-// currentState.messagesToSend conterá uma mensagem de greetingB para clientA.
-// console.log(currentState.messagesToSend);
-// [{ destination: 'client-a', message: <Buffer 43 6c 69 65 ... > ('Client B says hello!') }]
-
-// Client A publica uma mensagem no tópico 'updates'
-const publishPayloadA = 'Important update for everyone!';
-const publishPayloadABuffer = Buffer.from(publishPayloadA, 'utf-8');
-const publishMessageA = Buffer.concat([Buffer.from([1]), topicABuffer, publishPayloadABuffer]);
-
-currentState = handleMessage(currentState, clientA, publishMessageA);
-// currentState.messagesToSend (após limpar as anteriores) conterá uma mensagem de publishPayloadA para clientB.
-// console.log(currentState.messagesToSend);
-// [{ destination: 'client-b', message: <Buffer 49 6d 70 6f ... > ('Important update for everyone!') }]
-```
-
-Esta função `handleMessage`, junto com `getInitialState`, forma a base para um servidor Minipub que pode ser facilmente testado e integrado.
+Para uma descrição completa da estrutura da mensagem, incluindo como o tópico e o payload devem ser formatados, consulte a seção "Protocolo de Comunicação".
